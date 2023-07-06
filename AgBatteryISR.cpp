@@ -220,8 +220,7 @@ bool charge() {
 			vPeak = vExternal;
 		else if (vExternal <= vPeak - 0.001)  // detect any bump - TODO: beware early charge ISR drop, noise
 			break; // terminate
-
-		if ((levelMins += reportMinutes) >= 20)  // in case dv/dt not seen at low charge rates
+		else if ((levelMins += reportMinutes) >= 20)  // in case dv/dt not seen at low charge rates
 			break; // terminate
 		else displayOnSecs = reportMinutes * 60; // to watch termination
 	}
