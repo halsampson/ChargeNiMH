@@ -6,6 +6,7 @@
 //   P6V:  read 4 wire voltage
 
 // cycles NiMH cell
+// Data: https://docs.google.com/spreadsheets/d/1tSRwlEcyB1IPcc4s9cZxGvZLJLEmf76hiC5O18wYq60/edit?usp=sharing
 
 
 #include <windows.h>
