@@ -207,26 +207,23 @@ bool charge() {
 		const int reportMinutes = 1;   // for plot
 		if (!report(reportMinutes)) return false;		
 		
-		if (vExternal >= vComply) break; // terminate	  TODO: high?
-		
-		// if (isr < avgISR * 0.8) break; // ISR can drop quickly as temperature increases near max charge ??
-		// avgISR += (isr - avgISR) / 8;
+		if (vExternal >= vComply - 0.01) break; // terminate
 
-		// TODO: find end of 2nd downward inflection
-		// V slope high at first, levels off, near end slope increases again, levels off
-		//       2nd derivative: negative    0               positive      negative    0
-
-		// better dV signal from vExternal  https://lygte-info.dk/info/batteryChargingNiMH%20UK.html
+		// TODO: better detect 2nd vExternal downward inflection
+		// best dV signal from vExternal  https://lygte-info.dk/info/batteryChargingNiMH%20UK.html
  		if (vExternal >= vPeak + 0.0005) {  // terminate on very slow rise as well as negative dVext
 			vPeak = vExternal;
 			levelMins = 0;
 		}	else if (vExternal > vPeak)
 			vPeak = vExternal;
-		else if (vExternal <= vPeak - 0.001 && vInternal > 1.45)  // detect the 2nd peak in dVexternal
+		else if (vExternal <= vPeak - 0.001 && vInternal > 1.45)  // terminate only on the 2nd peak in dVexternal
 			break; // terminate
 		else if ((levelMins += reportMinutes) >= 20)  // in case dv/dt not seen at low charge rates
 			break; // terminate
 		else displayOnSecs = reportMinutes * 60; // to watch termination
+
+		// if (isr < avgISR * 0.8) break; // ?ISR can drop quickly as temperature increases near max charge ??
+		// avgISR += (isr - avgISR) / 8;
 	}
 	report(0);
 	return true;
@@ -235,18 +232,18 @@ bool charge() {
 bool discharge() {
   mAh = 0, mWh = 0;
 
-	iBatt = -1.0; // Agilent N25V max else could be C/2
+	iBatt = -1.0; // N25V max else could be C/2
 	vTerminate = 1.0;
   do {
     if (!report(2)) return false;
   } while (vExternal > vTerminate);
 	report(0);
 
+	iBatt = -C/20; // slow reconditioning discharge to break up crystals
 	vTerminate = 0.4;
-	iBatt = -C/20; // reconditioning discharge to break up crystals
 	do {
 		if (!report(5)) return false;
-	} while (vExternal > vTerminate); // NiCd deep discharge
+	} while (vExternal > vTerminate);
 	report(0);
 	return true;
 }
