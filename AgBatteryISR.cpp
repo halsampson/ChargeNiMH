@@ -149,9 +149,9 @@ bool report(int reportMinutes) {
 	batteryISR();
 	printf("%.4f,%.3f,%.4f,%5.0f,%5.0f\n", vExternal2, isr, vInternal, mAh, mWh);
 
-	float amps;
+	float amps = 0;
   ULONGLONG msEnd = msStart + reportMinutes * 60 * 1000;
-	while (GetTickCount64() < msEnd) {
+	while (1) {
 		if (terminate()) return true;
 
 		amps = getI(); 
@@ -160,7 +160,7 @@ bool report(int reportMinutes) {
 			return false;  // open circuit; 4mA max offset
 		}
 
-		// filament is direct from xfrmr;  122 vs. 115 VAC -> < 12.5% extra filament power
+		// VFD filament is direct from xfrmr;  122 vs. 115 VAC -> < 12.5% extra filament power
     if (_kbhit()) 
 			switch (_getch()) {
         case ' ' : toggle = 1; return false;  // TODO: toggle charge/discharge
@@ -173,14 +173,18 @@ bool report(int reportMinutes) {
 			cmd(display);
 		} else if (!displayOnSecs) 
 			cmd("DISP Off");
-	  --displayOnSecs;
-		Sleep(1000);
-	}
 
-	float delta_mAh = amps * (GetTickCount64() - msStart) / 3600;
-	mAh += delta_mAh;
-	mWh += vInternal * delta_mAh; 
-	return true;
+		Sleep(1000);
+		--displayOnSecs;
+
+		ULONGLONG msNow = GetTickCount64();
+		if (msNow >= msEnd) {	
+			float delta_mAh = amps * (msNow - msStart) / 3600;
+			mAh += delta_mAh;
+			mWh += vInternal * delta_mAh; 
+			return true;
+		}
+	}
 }
 
 
@@ -218,7 +222,7 @@ bool charge() {
 			levelMins = 0;
 		}	else if (vExternal > vPeak)
 			vPeak = vExternal;
-		else if (vExternal <= vPeak - 0.001)  // detect any bump - TODO: beware early charge ISR drop, noise
+		else if (vExternal <= vPeak - 0.001 && vInternal > 1.45)  // detect the 2nd peak in dVexternal
 			break; // terminate
 		else if ((levelMins += reportMinutes) >= 20)  // in case dv/dt not seen at low charge rates
 			break; // terminate
@@ -231,11 +235,12 @@ bool charge() {
 bool discharge() {
   mAh = 0, mWh = 0;
 
+	iBatt = -1.0; // Agilent N25V max else could be C/2
 	vTerminate = 1.0;
-	iBatt = -1.0; // Agilent N25V max
   do {
     if (!report(2)) return false;
-  } while (vExternal > vTerminate); 
+  } while (vExternal > vTerminate);
+	report(0);
 
 	vTerminate = 0.4;
 	iBatt = -C/20; // reconditioning discharge to break up crystals
@@ -269,8 +274,6 @@ int main() {
 	cmd("*RST");
 	cmd("SYST:REM");
 
-	cmd("DISP:TEXT \"Insert cell\"");
-
 	cmd("APPL P6V,4.4,0.002");  // for reading 4-wire voltage
 	cmd("OUTP ON");
 
@@ -278,6 +281,8 @@ int main() {
 	while (1) {
 		while (cycleNiMH());
 		setVI(0, 0);
+
+		cmd("DISP:TEXT \"Insert cell\"");
 		// TODO: check for cell inserted
 		_getch();
 	}
