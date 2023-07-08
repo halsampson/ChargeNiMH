@@ -207,7 +207,7 @@ bool charge() {
 		const int reportMinutes = 1;   // for plot
 		if (!report(reportMinutes)) return false;		
 		
-		if (vExternal >= vComply - 0.01) break; // terminate
+		if (vExternal >= vMax) break; // terminate
 
 		// TODO: better detect 2nd vExternal downward inflection
 		// best dV signal from vExternal  https://lygte-info.dk/info/batteryChargingNiMH%20UK.html
@@ -216,11 +216,13 @@ bool charge() {
 			levelMins = 0;
 		}	else if (vExternal > vPeak)
 			vPeak = vExternal;
-		else if (vExternal <= vPeak - 0.001 && vInternal > 1.45)  // terminate only on the 2nd peak in dVexternal
-			break; // terminate
-		else if ((levelMins += reportMinutes) >= 20)  // in case dv/dt not seen at low charge rates
-			break; // terminate
-		else displayOnSecs = reportMinutes * 60; // to watch termination
+		else if (vInternal > 1.45) { // terminate only on the 2nd peak in dVexternal
+			displayOnSecs = reportMinutes * 60; // to watch termination
+			if (vExternal <= vPeak - 0.001)  
+			  break; // terminate
+		  else if ((levelMins += reportMinutes) >= 20)  // in case dv/dt not seen at low charge rates
+			  break; // terminate		  
+		}
 
 		// if (isr < avgISR * 0.8) break; // ?ISR can drop quickly as temperature increases near max charge ??
 		// avgISR += (isr - avgISR) / 8;
