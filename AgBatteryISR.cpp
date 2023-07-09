@@ -8,6 +8,7 @@
 // cycles NiMH cell
 // Data: https://docs.google.com/spreadsheets/d/1tSRwlEcyB1IPcc4s9cZxGvZLJLEmf76hiC5O18wYq60/edit?usp=sharing
 
+// TODO: add temperature sensor
 
 #include <windows.h>
 #include <time.h>
@@ -16,12 +17,13 @@
 #include <math.h>
 
 const int MaxReadbackMillisec = 100;
-// longer -> less recovery slope
+
+#define COM_PORT "COM2"
 
 HANDLE hCom;
 
 void openSerial() {
-	hCom = CreateFileA("\\\\.\\COM2", GENERIC_WRITE | GENERIC_READ, 0, NULL, OPEN_EXISTING, NULL, NULL);
+	hCom = CreateFileA("\\\\.\\" COM_PORT, GENERIC_WRITE | GENERIC_READ, 0, NULL, OPEN_EXISTING, NULL, NULL);
 	if (hCom == INVALID_HANDLE_VALUE) exit(-2);
 
 	DCB dcb = { 0 };
@@ -98,7 +100,7 @@ float getI() {
 	}
 }
 
-float vMax, vComply;
+float vMax;
 
 float vInternal, vExternal2;
 float isr;
@@ -106,7 +108,7 @@ float isr;
 void batteryISR() {
 	const float iBump = 0.1;  // < min discharge current
 
-	vComply = vMax + iBatt * 0.2; // TODO: meter, cable + any diode drop from P25V
+	float vComply = vMax + iBatt * 0.2; // TODO: meter, cable + any diode drop from P25V
 	setVI(vComply, iBatt);  
 	float vExternal1 = getV();
 
@@ -136,7 +138,7 @@ bool terminate() {
 	if (iBatt < 0) {
     if (vExternal <= vTerminate) return true;  // terminate	
   } else {
-    if (vExternal >= vComply) return true;  // terminate	
+    if (vExternal >= vMax) return true;  // terminate	
   }
 	return false;
 }
@@ -147,7 +149,9 @@ bool report(int reportMinutes) {
 	if (terminate()) return true;
 
 	batteryISR();
-	printf("%.4f,%.3f,%.4f,%5.0f,%5.0f\n", vExternal2, isr, vInternal, mAh, mWh);
+	static float prevVext = vExternal2;
+	printf("%.4f,%.4f,%.3f,%.4f,%5.0f,%5.0f\n", vExternal2, vExternal2 - prevVext, isr, vInternal, mAh, mWh);
+	prevVext = vExternal2;
 
 	float amps = 0;
   ULONGLONG msEnd = msStart + reportMinutes * 60 * 1000;
@@ -161,7 +165,7 @@ bool report(int reportMinutes) {
 		}
 
 		// VFD filament is direct from xfrmr;  122 vs. 115 VAC -> < 12.5% extra filament power
-    if (_kbhit()) 
+    if (_kbhit()) // beware Escaped chars!!
 			switch (_getch()) {
         case ' ' : toggle = 1; return false;  // TODO: toggle charge/discharge
         default : displayOnSecs = _getch() - '0'; break;
