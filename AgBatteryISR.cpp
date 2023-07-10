@@ -9,6 +9,8 @@
 // Data: https://docs.google.com/spreadsheets/d/1tSRwlEcyB1IPcc4s9cZxGvZLJLEmf76hiC5O18wYq60/edit?usp=sharing
 
 // TODO: add temperature sensor
+// TODO: model R1 - C1 - R2 - C2  --> capacity estimate 
+//   5 minute tau
 
 #include <windows.h>
 #include <time.h>
@@ -128,7 +130,6 @@ int toggle;
 
 int displayOnSecs = 15;  // initial
 
-// TODO: model R1 - C1 - R2 - C2  --> capacity estimate 
 float vTerminate;
 float vExternal;
 float mAh, mWh;
@@ -143,13 +144,14 @@ bool terminate() {
 	return false;
 }
 
+ float prevVext;
+
 bool report(int reportMinutes) {
 	ULONGLONG msStart = GetTickCount64();
 
 	if (terminate()) return true;
 
 	batteryISR();
-	static float prevVext = vExternal2;
 	printf("%.4f,%.4f,%.3f,%.4f,%5.0f,%5.0f\n", vExternal2, vExternal2 - prevVext, isr, vInternal, mAh, mWh);
 	prevVext = vExternal2;
 
@@ -211,7 +213,13 @@ bool charge() {
 		const int reportMinutes = 1;   // for plot
 		if (!report(reportMinutes)) return false;		
 		
+		// see https://www.powerstream.com/NiMH.htm  for charge termination ideas
+		//  TODO: C/10 charge rate when starting below 1V and to top off for 4 hours
+		//        based on vInternal? or, better, temperature rise
+
 		if (vExternal >= vMax) break; // terminate
+
+		if (mAh >= C * 1000 * 1.66) break; // terminate on 166% charge  (150% typ. required to fill good cell)
 
 		// TODO: better detect 2nd vExternal downward inflection
 		// best dV signal from vExternal  https://lygte-info.dk/info/batteryChargingNiMH%20UK.html
@@ -238,8 +246,11 @@ bool charge() {
 bool discharge() {
   mAh = 0, mWh = 0;
 
-	iBatt = -1.0; // N25V max else could be C/2
-	vTerminate = 1.0;
+	// TODO: try servoing current to get roughly constant dV drop? vs. crystals/oxide/...
+	//   would reduce current at both start and end of discharge -- when reactions are concentrated near anode/cathode?
+
+	iBatt = max(-1.0, -C/2); // 1A N25V max 
+	vTerminate = 1.0;   // TODO: or as abs(dVext) or ISR (later) start increasing??
   do {
     if (!report(2)) return false;
   } while (vExternal > vTerminate);
@@ -272,7 +283,7 @@ int main() {
 	getResponse(); // flush
 
 	cmd("*IDN?");
-	printf("%s", response); // HEWLETT-PACKARD,E3631A,0,2.1-5.0-1.0\r\n
+	printf("%s", response);
 
 	cmd("*RST");
 	cmd("SYST:REM");
@@ -282,11 +293,16 @@ int main() {
 
 	// TODO detect battery type
 	while (1) {
+		prevVext = getV();
 		while (cycleNiMH());
 		setVI(0, 0);
 
 		cmd("DISP:TEXT \"Insert cell\"");
+
 		// TODO: check for cell inserted
 		_getch();
+
+		cmd("DISP Off");
+		displayOnSecs = 0;
 	}
 }
