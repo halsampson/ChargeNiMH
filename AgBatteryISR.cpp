@@ -145,12 +145,12 @@ bool terminate() {
 	return false;
 }
 
-bool toggle;
+bool toggleCharging;
 float prevVext;
 
 bool report(int reportMinutes) {
 	ULONGLONG msStart = GetTickCount64();
-	toggle = false;
+	toggleCharging = false;
 
 	batteryISR();
 	printf("%.4f,%.4f,%.3f,%.4f,%5.0f,%5.0f\n", vExternal, vExternal - prevVext, isr, vInternal, mAh, mWh);
@@ -169,7 +169,7 @@ bool report(int reportMinutes) {
 		
     if (_kbhit()) // beware Escaped chars!!
 			switch (_getch()) {
-        case 't' : toggle = true; return false;  // toggle charge/discharge
+        case 't' : toggleCharging = true; return false;  // toggleCharging charge/discharge
         default : displayOnSecs = _getch() - '0'; break;
       }
 
@@ -282,8 +282,8 @@ bool cycleNiMH() {
   C = 0.3; // 3.5;
 	vMax = 1.7;  // TODO: depends on battery age, temperature - better vInternalMax ****
 
-  if (!discharge() && !toggle) return false;
-	if (!charge() && !toggle) return false;
+  if (!discharge() && !toggleCharging) return false;
+	if (!charge() && !toggleCharging) return false;
 
 	return true;
 }
