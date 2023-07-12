@@ -10,6 +10,8 @@
 
 // TODO: add temperature sensor
 // TODO: model R1 - C1 - R2 - C2  --> capacity estimate 
+//   sweep pulse length
+//   sweep also pulse height
 //   5 minute tau
 
 #include <windows.h>
@@ -18,6 +20,7 @@
 #include <conio.h>
 #include <math.h>
 
+const float iMax = 1.0; // Agilent N25V, P25V
 const int MaxReadbackMillisec = 100;
 
 #define COM_PORT "COM2"
@@ -104,56 +107,54 @@ float getI() {
 
 float vMax;
 
-float vInternal, vExternal2;
+float vInternal, vExternal;
 float isr;
+float iBump = 0.1;  // < min discharge current
 
 void batteryISR() {
-	const float iBump = 0.1;  // < min discharge current
-
 	float vComply = vMax + iBatt * 0.2; // TODO: meter, cable + any diode drop from P25V
 	setVI(vComply, iBatt);  
 	float vExternal1 = getV();
 
+	if (iBump > fabs(iBatt)) iBump = fabs(iBatt);
 	const float MaxISR = 5; // Ohms
   setVI(vComply + MaxISR * iBump, iBatt += iBump);
 	float vBump = getV();
 
 	setVI(vComply, iBatt -= iBump);
-	vExternal2 = getV();
+	vExternal = getV();
 
 	// avg pop/dip to avoid charging delta V error
-	isr = (vBump - (vExternal1 + vExternal2) / 2) / iBump;
-	vInternal = vExternal2 - isr * iBatt;
+	isr = (vBump - (vExternal1 + vExternal) / 2) / iBump;
+	vInternal = vExternal - isr * iBatt;
 }
-
-int toggle;
 
 int displayOnSecs = 15;  // initial
 
-float vTerminate;
-float vExternal;
+float vTerminateDischarge;
 float mAh, mWh;
 
 bool terminate() { 
 	vExternal = getV();
+	vInternal = vExternal - isr * iBatt;
 	if (iBatt < 0) {
-    if (vExternal <= vTerminate) return true;  // terminate	
+    if (vInternal <= vTerminateDischarge) return true;  // terminate
   } else {
-    if (vExternal >= vMax) return true;  // terminate	
+    if (vExternal >= vMax) return true;  // terminate	TODO: batter vInternal? (vs. heating)
   }
 	return false;
 }
 
- float prevVext;
+bool toggle;
+float prevVext;
 
 bool report(int reportMinutes) {
 	ULONGLONG msStart = GetTickCount64();
-
-	if (terminate()) return true;
+	toggle = false;
 
 	batteryISR();
-	printf("%.4f,%.4f,%.3f,%.4f,%5.0f,%5.0f\n", vExternal2, vExternal2 - prevVext, isr, vInternal, mAh, mWh);
-	prevVext = vExternal2;
+	printf("%.4f,%.4f,%.3f,%.4f,%5.0f,%5.0f\n", vExternal, vExternal - prevVext, isr, vInternal, mAh, mWh);
+	prevVext = vExternal;
 
 	float amps = 0;
   ULONGLONG msEnd = msStart + reportMinutes * 60 * 1000;
@@ -161,19 +162,19 @@ bool report(int reportMinutes) {
 		if (terminate()) return true;
 
 		amps = getI(); 
-		if (fabs(amps) < 0.01) {
+		if (fabs(amps) < 0.004) {
 			printf("Open\n");
 			return false;  // open circuit; 4mA max offset
 		}
-
-		// VFD filament is direct from xfrmr;  122 vs. 115 VAC -> < 12.5% extra filament power
+		
     if (_kbhit()) // beware Escaped chars!!
 			switch (_getch()) {
-        case ' ' : toggle = 1; return false;  // TODO: toggle charge/discharge
+        case 't' : toggle = true; return false;  // toggle charge/discharge
         default : displayOnSecs = _getch() - '0'; break;
       }
 
 		if (displayOnSecs > 0) {
+			// VFD filament is direct from xfrmr;  122 vs. 115 VAC -> < 12.5% extra filament power
 			char display[12 + 12 + 1 + 7]; // 12 chars not counting .,;
 			sprintf_s(display, sizeof display, "DISP:TEXT \"%.4fV %.0fmO\"", vExternal, isr * 1000);
 			cmd(display);
@@ -197,29 +198,32 @@ bool report(int reportMinutes) {
 float C; // Capacity in Ah
 
 bool charge() {
-#if 1
-	iBatt = C/4; // dV bump of ~8 mV at C/4
-	vMax = 1.6;  // vMax < 1.57 for GOOD cell + ISR
-#else
-	iBatt = C/10; // forming charge
-	vMax = 1.53;
-#endif
-
 	mAh = 0, mWh = 0;
+
+	while (vInternal < 1) { // initial slow charge
+	  iBatt = C/10;
+		report(1);
+	}
+
+#if 1
+	iBatt = min(iMax - iBump, C); // dV bump of ~8 mV at C/4
+#endif	
+
 	int levelMins = 0;
 	float vPeak = 0;
 	float avgISR = 0;
+
 	while (1) {
 		const int reportMinutes = 1;   // for plot
 		if (!report(reportMinutes)) return false;		
 		
 		// see https://www.powerstream.com/NiMH.htm  for charge termination ideas
-		//  TODO: C/10 charge rate when starting below 1V and to top off for 4 hours
-		//        based on vInternal? or, better, temperature rise
 
 		if (vExternal >= vMax) break; // terminate
+		if (vInternal >= 1.5) break;  // TODO: depends on iBatt due to complex model; adjust ****
 
-		if (mAh >= C * 1000 * 1.66) break; // terminate on 166% charge  (150% typ. required to fill good cell)
+		// TODO: terminate based on previous measured discharge mAh??
+		if (mAh >= C * 1000 * 1.1) break; // + 40% below: 150% typ. required to fill good cell at fast charge
 
 		// TODO: better detect 2nd vExternal downward inflection
 		// best dV signal from vExternal  https://lygte-info.dk/info/batteryChargingNiMH%20UK.html
@@ -228,7 +232,7 @@ bool charge() {
 			levelMins = 0;
 		}	else if (vExternal > vPeak)
 			vPeak = vExternal;
-		else if (vInternal > 1.45) { // terminate only on the 2nd peak in dVexternal
+		else if (vInternal > 1.45 && mAh > C * 1000 * 0.7) { // terminate only after 2nd peak in dVexternal
 			displayOnSecs = reportMinutes * 60; // to watch termination
 			if (vExternal <= vPeak - 0.001)  
 			  break; // terminate
@@ -240,6 +244,14 @@ bool charge() {
 		// avgISR += (isr - avgISR) / 8;
 	}
 	report(0);
+
+	// C/10 charge rate top off for 4 hours
+	if (vExternal < vMax) {
+		iBatt = C/10; // safer top off charge rate
+		for (int topOff = 4 * 60; (topOff -= 5) >= 0;)  // minutes
+			report(5);
+	}
+	report(0);
 	return true;
 }
 
@@ -249,29 +261,29 @@ bool discharge() {
 	// TODO: try servoing current to get roughly constant dV drop? vs. crystals/oxide/...
 	//   would reduce current at both start and end of discharge -- when reactions are concentrated near anode/cathode?
 
-	iBatt = max(-1.0, -C/2); // 1A N25V max 
-	vTerminate = 1.0;   // TODO: or as abs(dVext) or ISR (later) start increasing??
+	iBatt = max(-iMax, -C/2); // 1A N25V max 
+	vTerminateDischarge = 1.0;   // TODO: or as abs(dVext) or ISR (later) start increasing??
   do {
     if (!report(2)) return false;
-  } while (vExternal > vTerminate);
+  } while (vExternal > vTerminateDischarge);
 	report(0);
 
 	iBatt = -C/20; // slow reconditioning discharge to break up crystals
-	vTerminate = 0.4;
+	vTerminateDischarge = 0.4;
 	do {
 		if (!report(5)) return false;
-	} while (vExternal > vTerminate);
+	} while (vExternal > vTerminateDischarge);
 	report(0);
 	return true;
 }
 
 
 bool cycleNiMH() {
-  C = 3.5;
-	vMax = 1.6;  // TODO: depends on temperature
+  C = 0.3; // 3.5;
+	vMax = 1.7;  // TODO: depends on battery age, temperature - better vInternalMax ****
 
-  if (!discharge() && --toggle) return false;
-	if (!charge() && --toggle) return false;
+  if (!discharge() && !toggle) return false;
+	if (!charge() && !toggle) return false;
 
 	return true;
 }
@@ -299,8 +311,10 @@ int main() {
 
 		cmd("DISP:TEXT \"Insert cell\"");
 
-		// TODO: check for cell inserted
-		_getch();
+		while (1) {
+		 Sleep(1);
+		 if (getV() < vMax) break; // check cell inserted
+		}
 
 		cmd("DISP Off");
 		displayOnSecs = 0;
