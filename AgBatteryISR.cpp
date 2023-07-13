@@ -8,11 +8,15 @@
 // cycles NiMH cell
 // Data: https://docs.google.com/spreadsheets/d/1tSRwlEcyB1IPcc4s9cZxGvZLJLEmf76hiC5O18wYq60/edit?usp=sharing
 
-// TODO: add temperature sensor
-// TODO: model R1 - C1 - R2 - C2  --> capacity estimate 
+// TODO: model R1 - C1 - R2 - C2 ...  --> capacity estimate 
 //   sweep pulse length
 //   sweep also pulse height
+//   analyze responses
 //   5 minute tau
+//   balance charge/discharge for stable SoC
+//   also estimate internal discharge (slow)
+
+// TODO: add temperature sensor
 
 #include <windows.h>
 #include <time.h>
@@ -153,7 +157,7 @@ bool report(int reportMinutes) {
 	toggleCharging = false;
 
 	batteryISR();
-	printf("%.4f,%.4f,%.3f,%.4f,%5.0f,%5.0f\n", vExternal, vExternal - prevVext, isr, vInternal, mAh, mWh);
+	printf("%.4f,%5.1f,%4.0f,%7.4f,%5.0f,%5.0f\n", vExternal, (vExternal - prevVext) * 1000, isr * 1000, vInternal, mAh, mWh);
 	prevVext = vExternal;
 
 	float amps = 0;
@@ -220,7 +224,7 @@ bool charge() {
 		// see https://www.powerstream.com/NiMH.htm  for charge termination ideas
 
 		if (vExternal >= vMax) break; // terminate
-		if (vInternal >= 1.5) break;  // TODO: depends on iBatt due to complex model; adjust ****
+		if (vInternal >= 1.6) break;  // TODO: vInternal still depends on iBatt due to complex model; adjust ****
 
 		// TODO: terminate based on previous measured discharge mAh??
 		if (mAh >= C * 1000 * 1.1) break; // + 40% below: 150% typ. required to fill good cell at fast charge
@@ -248,8 +252,11 @@ bool charge() {
 	// C/10 charge rate top off for 4 hours
 	if (vExternal < vMax) {
 		iBatt = C/10; // safer top off charge rate
-		for (int topOff = 4 * 60; (topOff -= 5) >= 0;)  // minutes
+		for (int topOff = 4 * 60; (topOff -= 5) >= 0;) { // minutes
 			report(5);
+			if (mAh >= C * 1000 * 1.5) break;  // max 50% Coulombic loss
+			// TODO: other termination signs?
+		}
 	}
 	report(0);
 	return true;
@@ -279,7 +286,7 @@ bool discharge() {
 
 
 bool cycleNiMH() {
-  C = 0.3; // 3.5;
+  C = 2.0; // 0.3; // 3.5;
 	vMax = 1.7;  // TODO: depends on battery age, temperature - better vInternalMax ****
 
   if (!discharge() && !toggleCharging) return false;
@@ -303,20 +310,19 @@ int main() {
 	cmd("APPL P6V,4.4,0.002");  // for reading 4-wire voltage
 	cmd("OUTP ON");
 
-	// TODO detect battery type
-	while (1) {
+	// TODO detect battery type, capacity
+	vMax = 4.2;
+
+	while (1) {		
+		cmd("DISP:TEXT \"Insert cell\"");
+		while (1) {
+		  if (getV() < vMax) break; // check cell inserted
+		  Sleep(1);
+		}
+
+		displayOnSecs = 10;
 		prevVext = getV();
 		while (cycleNiMH());
 		setVI(0, 0);
-
-		cmd("DISP:TEXT \"Insert cell\"");
-
-		while (1) {
-		 Sleep(1);
-		 if (getV() < vMax) break; // check cell inserted
-		}
-
-		cmd("DISP Off");
-		displayOnSecs = 0;
 	}
 }
