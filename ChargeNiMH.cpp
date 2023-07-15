@@ -1,4 +1,6 @@
-// AgBatteryISR.cpp 
+// ChargeNiMH.cpp 
+
+// Charge cycle NiMH cell
 
 // Using Agilent E3631A
 //   P25V: charge
@@ -17,6 +19,9 @@
 //   also estimate internal discharge (slow)
 
 // TODO: add temperature sensor
+
+// TODO: Try very short, high current pulsed charge/discharge cycles to break up crystallization
+//   Any way to remove surface oxide layers?
 
 #include <windows.h>
 #include <time.h>
@@ -199,7 +204,7 @@ bool report(int reportMinutes) {
 }
 
 
-float C; // Capacity in Ah
+float C; // Cell Capacity in Ah
 
 bool charge() {
 	mAh = 0, mWh = 0;
@@ -254,7 +259,7 @@ bool charge() {
 		iBatt = C/10; // safer top off charge rate
 		for (int topOff = 4 * 60; (topOff -= 5) >= 0;) { // minutes
 			report(5);
-			if (mAh >= C * 1000 * 1.5) break;  // max 50% Coulombic loss
+			if (mAh >= C * 1000 * 1.2) break;  // TODO: vs. max 50% Coulombic loss
 			// TODO: other termination signs?
 		}
 	}
@@ -286,7 +291,7 @@ bool discharge() {
 
 
 bool cycleNiMH() {
-  C = 2.0; // 0.3; // 3.5;
+  C = 3.5; // 0.3; // 3.5;
 	vMax = 1.7;  // TODO: depends on battery age, temperature - better vInternalMax ****
 
   if (!discharge() && !toggleCharging) return false;
@@ -311,10 +316,9 @@ int main() {
 	cmd("OUTP ON");
 
 	// TODO detect battery type, capacity
-	vMax = 4.2;
-
 	while (1) {		
 		cmd("DISP:TEXT \"Insert cell\"");
+		vMax = 4.3;
 		while (1) {
 		  if (getV() < vMax) break; // check cell inserted
 		  Sleep(1);
