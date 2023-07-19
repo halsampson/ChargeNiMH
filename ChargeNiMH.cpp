@@ -289,7 +289,7 @@ bool discharge() {
 	} while (vExternal > vTerminateDischarge);
 	report(0);
 
-	lastDischarge_mAh = mAh;
+	lastDischarge_mAh = -mAh;
 
 	return true;
 }
