@@ -205,6 +205,7 @@ bool report(int reportMinutes) {
 
 
 float C; // Cell Capacity in Ah
+float lastDischarge_mAh;
 
 bool charge() {
 	mAh = 0, mWh = 0;
@@ -231,8 +232,7 @@ bool charge() {
 		if (vExternal >= vMax) break; // terminate
 		if (vInternal >= 1.6) break;  // TODO: vInternal still depends on iBatt due to complex model; adjust ****
 
-		// TODO: terminate based on previous measured discharge mAh??
-		if (mAh >= C * 1000 * 1.1) break; // + 40% below: 150% typ. required to fill good cell at fast charge
+		if (mAh >= C * 1000 * 1.1) break; // + up to 40% below: 150% typ. required to fill good cell at fast charge
 
 		// TODO: better detect 2nd vExternal downward inflection
 		// best dV signal from vExternal  https://lygte-info.dk/info/batteryChargingNiMH%20UK.html
@@ -241,7 +241,8 @@ bool charge() {
 			levelMins = 0;
 		}	else if (vExternal > vPeak)
 			vPeak = vExternal;
-		else if (vInternal > 1.45 && mAh > C * 1000 * 0.7) { // terminate only after 2nd peak in dVexternal
+		else if (vInternal > 1.42 && mAh > lastDischarge_mAh + C/4 
+			    || vInternal > 1.45 && mAh > C * 1000 * 0.7) { // terminate only after 2nd peak in dVexternal
 			displayOnSecs = reportMinutes * 60; // to watch termination
 			if (vExternal <= vPeak - 0.001)  
 			  break; // terminate
@@ -254,12 +255,13 @@ bool charge() {
 	}
 	report(0);
 
-	// C/10 charge rate top off for 4 hours
+	// C/10 charge rate top off for 4 hours or another 10%
 	if (vExternal < vMax) {
 		iBatt = C/10; // safer top off charge rate
 		for (int topOff = 4 * 60; (topOff -= 5) >= 0;) { // minutes
 			report(5);
 			if (mAh >= C * 1000 * 1.2) break;  // TODO: vs. max 50% Coulombic loss
+			if (mAh > lastDischarge_mAh * 2 + C/4) break;
 			// TODO: other termination signs?
 		}
 	}
@@ -286,6 +288,9 @@ bool discharge() {
 		if (!report(5)) return false;
 	} while (vExternal > vTerminateDischarge);
 	report(0);
+
+	lastDischarge_mAh = mAh;
+
 	return true;
 }
 
