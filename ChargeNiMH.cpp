@@ -102,10 +102,10 @@ float getV() {
 	return atof(response);
 }
 
-float iBatt;
+float iBattReq;
 
 float getI() {
-	if (iBatt > 0) {
+	if (iBattReq > 0) {
 		cmd("MEAS:CURR? P25V");
 	  return atof(response);
 	} else {
@@ -114,28 +114,31 @@ float getI() {
 	}
 }
 
-float vMax;
+float vInternalMax;
 
-float vInternal, vExternal;
+float vInternal, vExternal, iBattMeas;
 float isr;
 float iBump = 0.1;  // < min discharge current
 
 void batteryISR() {
-	float vComply = vMax + iBatt * 0.2; // TODO: meter, cable + any diode drop from P25V
-	setVI(vComply, iBatt);  
+	float vComply = vInternalMax + iBattReq * 0.2; // TODO: meter, cable + any diode drop from P25V
+	setVI(vComply, iBattReq);  
 	float vExternal1 = getV();
+	float iNom = getI();
 
-	if (iBump > fabs(iBatt)) iBump = fabs(iBatt);
+	if (iBump > fabs(iBattReq)) iBump = fabs(iBattReq);
 	const float MaxISR = 5; // Ohms
-  setVI(vComply + MaxISR * iBump, iBatt += iBump);
+  setVI(vComply + MaxISR * iBump, iBattReq + iBump);
 	float vBump = getV();
+	float iBumped = getI();
 
-	setVI(vComply, iBatt -= iBump);
+	setVI(vComply, iBattReq);
 	vExternal = getV();
+	iBattMeas = (iNom + getI()) / 2;
 
 	// avg pop/dip to avoid charging delta V error
-	isr = (vBump - (vExternal1 + vExternal) / 2) / iBump;
-	vInternal = vExternal - isr * iBatt;
+	isr = (vBump - (vExternal1 + vExternal) / 2) / (iBumped - iBattMeas);
+	vInternal = vExternal - isr * iBattMeas;
 }
 
 int displayOnSecs = 15;  // initial
@@ -145,11 +148,11 @@ float mAh, mWh;
 
 bool terminate() { 
 	vExternal = getV();
-	vInternal = vExternal - isr * iBatt;
-	if (iBatt < 0) {
+	vInternal = vExternal - isr * iBattReq;
+	if (iBattReq < 0) {
     if (vInternal <= vTerminateDischarge) return true;  // terminate
   } else {
-    if (vExternal >= vMax) return true;  // terminate	TODO: batter vInternal? (vs. heating)
+    if (vInternal >= vInternalMax) return true;  // terminate	TODO: batter vInternal? (vs. heating)
   }
 	return false;
 }
@@ -211,12 +214,12 @@ bool charge() {
 	mAh = 0, mWh = 0;
 
 	while (vInternal < 1) { // initial slow charge
-	  iBatt = C/10;
+	  iBattReq = C/10;
 		report(1);
 	}
 
 #if 1
-	iBatt = min(iMax - iBump, C); // dV bump of ~8 mV at C/4
+	iBattReq = min(iMax - iBump, C); // dV bump of ~8 mV at C/4
 #endif	
 
 	int levelMins = 0;
@@ -228,9 +231,7 @@ bool charge() {
 		if (!report(reportMinutes)) return false;		
 		
 		// see https://www.powerstream.com/NiMH.htm  for charge termination ideas
-
-		if (vExternal >= vMax) break; // terminate
-		if (vInternal >= 1.6) break;  // TODO: vInternal still depends on iBatt due to complex model; adjust ****
+		if (vInternal >= vInternalMax) break;  // TODO: vInternal still depends on iBattReq due to complex model; adjust ****
 
 		if (mAh >= C * 1000 * 1.1) break; // + up to 40% below: 150% typ. required to fill good cell at fast charge
 
@@ -256,8 +257,8 @@ bool charge() {
 	report(0);
 
 	// C/10 charge rate top off for 4 hours or another 10%
-	if (vExternal < vMax) {
-		iBatt = C/10; // safer top off charge rate
+	if (vInternal < vInternalMax) {
+		iBattReq = C/10; // safer top off charge rate
 		for (int topOff = 4 * 60; (topOff -= 5) >= 0;) { // minutes
 			report(5);
 			if (mAh >= C * 1000 * 1.2) break;  // TODO: vs. max 50% Coulombic loss
@@ -275,14 +276,14 @@ bool discharge() {
 	// TODO: try servoing current to get roughly constant dV drop? vs. crystals/oxide/...
 	//   would reduce current at both start and end of discharge -- when reactions are concentrated near anode/cathode?
 
-	iBatt = max(-iMax, -C/2); // 1A N25V max 
+	iBattReq = max(-iMax, -C/2); // 1A N25V max 
 	vTerminateDischarge = 1.0;   // TODO: or as abs(dVext) or ISR (later) start increasing??
   do {
     if (!report(2)) return false;
   } while (vExternal > vTerminateDischarge);
 	report(0);
 
-	iBatt = -C/20; // slow reconditioning discharge to break up crystals
+	iBattReq = -C/20; // slow reconditioning discharge to break up crystals
 	vTerminateDischarge = 0.4;
 	do {
 		if (!report(5)) return false;
@@ -297,7 +298,7 @@ bool discharge() {
 
 bool cycleNiMH() {
   C = 3.5; // 0.3; // 3.5;
-	vMax = 1.7;  // TODO: depends on battery age, temperature - better vInternalMax ****
+	vInternalMax = 1.6;  // TODO: depends on battery age, temperature
 
   if (!discharge() && !toggleCharging) return false;
 	if (!charge() && !toggleCharging) return false;
@@ -323,9 +324,10 @@ int main() {
 	// TODO detect battery type, capacity
 	while (1) {		
 		cmd("DISP:TEXT \"Insert cell\"");
-		vMax = 4.3;
+		printf("Insert cell\n");
+		Sleep(1000);  // charge output cap
 		while (1) {
-		  if (getV() < vMax) break; // check cell inserted
+		  if (getV() < 4.3) break; // check cell inserted
 		  Sleep(1);
 		}
 
